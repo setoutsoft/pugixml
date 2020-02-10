@@ -14,7 +14,7 @@
 #ifndef SOURCE_PUGIXML_CPP
 #define SOURCE_PUGIXML_CPP
 
-#include "pugixml.hpp"
+#include <pugixml/pugixml.hpp>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -38,7 +38,8 @@
 #endif
 
 // For placement new
-#include <new>
+#include <snew.h>
+#include <string/strcpcvt.h>
 
 #ifdef _MSC_VER
 #	pragma warning(push)
@@ -179,6 +180,10 @@ namespace pugi
 #	include <stdint.h>
 #endif
 
+#ifndef ARRAYSIZE
+#define ARRAYSIZE(A)    (sizeof(A)/sizeof(A[0]))
+#endif
+
 // Memory allocation
 PUGI__NS_BEGIN
 	PUGI__FN void* default_allocate(size_t size)
@@ -221,14 +226,20 @@ PUGI__NS_BEGIN
 	}
 
 	// Compare two strings
-	PUGI__FN bool strequal(const char_t* src, const char_t* dst)
+	PUGI__FN bool strequal(const char_t* src, const char_t* dst,bool bCaseSensitive)
 	{
 		assert(src && dst);
 
 	#ifdef PUGIXML_WCHAR_MODE
-		return wcscmp(src, dst) == 0;
+		if(bCaseSensitive)
+			return wcscmp(src, dst) == 0;
+		else
+			return wcsicmp(src,dst) == 0;
 	#else
-		return strcmp(src, dst) == 0;
+		if(bCaseSensitive)
+			return strcmp(src, dst) == 0;
+		else
+			return stricmp(src,dst) == 0;
 	#endif
 	}
 
@@ -1093,7 +1104,7 @@ namespace pugi
 {
 	struct xml_attribute_struct
 	{
-		xml_attribute_struct(impl::xml_memory_page* page): name(0), value(0), prev_attribute_c(0), next_attribute(0)
+		xml_attribute_struct(impl::xml_memory_page* page): name(0), value(0), prev_attribute_c(0), next_attribute(0),userdata(0)
 		{
 			header = PUGI__GETHEADER_IMPL(this, page, 0);
 		}
@@ -1102,6 +1113,7 @@ namespace pugi
 
 		char_t*	name;
 		char_t*	value;
+		int     userdata;///< user data
 
 		xml_attribute_struct* prev_attribute_c;
 		xml_attribute_struct* next_attribute;
@@ -1109,7 +1121,7 @@ namespace pugi
 
 	struct xml_node_struct
 	{
-		xml_node_struct(impl::xml_memory_page* page, xml_node_type type): name(0), value(0), parent(0), first_child(0), prev_sibling_c(0), next_sibling(0), first_attribute(0)
+		xml_node_struct(impl::xml_memory_page* page, xml_node_type type): name(0), value(0), parent(0), first_child(0), prev_sibling_c(0), next_sibling(0), first_attribute(0),userdata(0)
 		{
 			header = PUGI__GETHEADER_IMPL(this, page, type);
 		}
@@ -1118,6 +1130,7 @@ namespace pugi
 
 		char_t* name;
 		char_t* value;
+		int     userdata;///< user data
 
 		xml_node_struct* parent;
 
@@ -1969,35 +1982,56 @@ PUGI__NS_BEGIN
 	#undef PUGI__SCANCHARTYPE
 	}
 
-	PUGI__FN xml_encoding guess_buffer_encoding(const uint8_t* data, size_t size)
+	struct BomInfo
+	{
+		char len;
+		uint8_t bom[4];
+		xml_encoding encoding;
+	};
+	BomInfo bomMap[] = {
+		{ 3,{ 0xef,0xbb,0xbf },encoding_utf8 },
+		{ 4,{ 's','x','m','l' },encoding_bin },
+		{ 4,{ 0,0,0xfe,0xff },encoding_utf32_be },
+		{ 4,{ 0xff,0xfe,0,0 },encoding_utf32_le },
+		{ 2,{ 0xfe,0xff },encoding_utf16_be },
+		{ 2,{ 0xff,0xfe },encoding_utf16_le },
+
+		// look for <, <? or <?xm in various encodings
+		{ 4,{ 0,0,0,0x3c },encoding_utf32_be },
+		{ 4,{ 0x3c,0,0,0 },encoding_utf32_le },
+		{ 4,{ 0,0x3c,0,0x3f },encoding_utf16_be },
+		{ 4,{ 0x3c,0,0x3f,0 },encoding_utf16_le },
+		{ 4,{ 0x3c,0x3f,0x78,0x6d },encoding_utf8 },
+
+		// look for utf16 < followed by node name (this may fail, but is better than utf8 since it's zero terminated so early)
+		{ 2,{ 0,0x3c },encoding_utf16_be },
+		{ 2,{ 0x3c ,0},encoding_utf16_le },
+	};
+
+	PUGI__FN xml_encoding guess_buffer_encoding(const uint8_t* d, size_t size)
 	{
 		// skip encoding autodetection if input buffer is too small
 		if (size < 4) return encoding_utf8;
 
-		uint8_t d0 = data[0], d1 = data[1], d2 = data[2], d3 = data[3];
-
-		// look for BOM in first few bytes
-		if (d0 == 0 && d1 == 0 && d2 == 0xfe && d3 == 0xff) return encoding_utf32_be;
-		if (d0 == 0xff && d1 == 0xfe && d2 == 0 && d3 == 0) return encoding_utf32_le;
-		if (d0 == 0xfe && d1 == 0xff) return encoding_utf16_be;
-		if (d0 == 0xff && d1 == 0xfe) return encoding_utf16_le;
-		if (d0 == 0xef && d1 == 0xbb && d2 == 0xbf) return encoding_utf8;
-
-		// look for <, <? or <?xm in various encodings
-		if (d0 == 0 && d1 == 0 && d2 == 0 && d3 == 0x3c) return encoding_utf32_be;
-		if (d0 == 0x3c && d1 == 0 && d2 == 0 && d3 == 0) return encoding_utf32_le;
-		if (d0 == 0 && d1 == 0x3c && d2 == 0 && d3 == 0x3f) return encoding_utf16_be;
-		if (d0 == 0x3c && d1 == 0 && d2 == 0x3f && d3 == 0) return encoding_utf16_le;
-
-		// look for utf16 < followed by node name (this may fail, but is better than utf8 since it's zero terminated so early)
-		if (d0 == 0 && d1 == 0x3c) return encoding_utf16_be;
-		if (d0 == 0x3c && d1 == 0) return encoding_utf16_le;
-
+		for (int i = 0; i < ARRAYSIZE(bomMap); i++)
+		{
+			bool bFind = true;
+			for (char j = 0; j < bomMap[i].len; j++)
+			{
+				if (bomMap[i].bom[j] != d[j])
+				{
+					bFind = false;
+					break;
+				}
+			}
+			if (bFind)
+				return bomMap[i].encoding;
+		}
 		// no known BOM detected; parse declaration
 		const uint8_t* enc = 0;
 		size_t enc_length = 0;
 
-		if (d0 == 0x3c && d1 == 0x3f && d2 == 0x78 && d3 == 0x6d && parse_declaration_encoding(data, size, enc, enc_length))
+		if (d[0] == 0x3c && d[1] == 0x3f && d[2] == 0x78 && d[3] == 0x6d && parse_declaration_encoding(d, size, enc, enc_length))
 		{
 			// iso-8859-1 (case-insensitive)
 			if (enc_length == 10
@@ -4688,6 +4722,115 @@ PUGI__NS_BEGIN
 		return strcpy_insitu(dest, header, header_mask, value ? PUGIXML_TEXT("true") : PUGIXML_TEXT("false"), value ? 4 : 5);
 	}
 
+	int read_index(const char* &buf,int &nLen,int nIdxSize)
+	{
+		int nRet = 0;
+		memcpy(&nRet,buf,nIdxSize);
+		buf += nIdxSize;
+		nLen -= nIdxSize;
+		return nRet;
+	}
+
+	int index_size(int nMapSize)
+	{
+		if(nMapSize<255) return 1;
+		else if(nMapSize<65535) return 2;
+		else return 4;
+	}
+
+	template<typename T>
+	T read_buf(const char * &p, int &nLen)
+	{
+		assert(nLen>=sizeof(T));
+		T ret;
+		memcpy(&ret,p,sizeof(T));
+		p+=sizeof(T);
+		nLen -= sizeof(T);
+
+		return ret;
+	}
+
+	PUGI__FN void _load_bin_impl(xml_document_struct *doc,xml_node_struct * xmlStrut,const char * & buf,int & nLen,char_t ** ppStrMap,int nMapSize)
+	{
+		//read type
+		int nIdxSize = index_size(nMapSize);
+
+		xml_node xmlNode(xmlStrut);
+		if(xmlNode.type() != node_document)
+		{
+			int nIdx = read_index(buf,nLen,nIdxSize);
+			if(nIdx>0)
+			{
+				xmlStrut->name = ppStrMap[nIdx-1];
+			}
+			nIdx = read_index(buf,nLen,nIdxSize);
+			if(nIdx>0)
+			{
+				xmlStrut->value = ppStrMap[nIdx-1];
+			}
+			//read attributes
+			nIdx = read_index(buf,nLen,nIdxSize);
+			while(nIdx)
+			{
+				xml_attribute_struct * attr = impl::append_new_attribute(xmlStrut, impl::get_allocator(xmlStrut));
+				attr->name = ppStrMap[nIdx-1];
+				nIdx = read_index(buf,nLen,nIdxSize);
+				if(nIdx>0) attr->value = ppStrMap[nIdx-1];
+				//read attribute
+				nIdx = read_index(buf,nLen,nIdxSize);
+			}
+		}
+		//read children
+		char ct = read_buf<char>(buf,nLen);
+		while(ct != node_null)
+		{
+			xml_node_struct * xmlChild = impl::append_new_node(xmlStrut, impl::get_allocator(xmlStrut), (xml_node_type)ct);
+			_load_bin_impl(doc,xmlChild,buf,nLen,ppStrMap,nMapSize);
+			ct = read_buf<char>(buf,nLen);
+		}
+	}
+
+	PUGI__FN xml_parse_result load_bin_impl(xml_document_struct *doc,xml_node_struct * xmlStrut,const char * buf,int nLen)
+	{
+		xml_parse_result res;
+		sxml_info header = read_buf<sxml_info>(buf,nLen);
+		if(memcmp(header.flag, SXML_BOM, 4)!=0 || header.ver!= SXML_VER)
+		{
+			res.status = status_bad_doctype;
+			return res;
+		}
+
+		char_t ** strMap = (char_t **)malloc(header.nStrMapSize*sizeof(char_t *));
+		char_t * strBuf = NULL;
+
+#ifdef PUGIXML_WCHAR_MODE
+		int nStrLen = MultiByteToWideChar(CP_UTF8, 0, buf, header.nStrMapLen, NULL, 0);//convert utf8 2 wide char.
+		strBuf = static_cast<wchar_t *>(impl::xml_memory::allocate(nStrLen * sizeof(wchar_t)));
+		MultiByteToWideChar(CP_UTF8, 0, buf, header.nStrMapLen, strBuf, nStrLen);
+#else
+		strBuf = static_cast<char *>(impl::xml_memory::allocate(nLen));
+		memcpy(strBuf, buf, nLen);
+#endif        
+		buf += header.nStrMapLen;
+		nLen -= header.nStrMapLen;
+
+		char_t * p = strBuf;
+		strMap[0] = p;
+		for(int i=1;i<header.nStrMapSize;i++)
+		{
+			p += impl::strlength(p)+1;
+			strMap[i] = p;
+		}
+
+		doc->buffer = strBuf;
+
+		_load_bin_impl(doc,xmlStrut,buf,nLen,strMap,header.nStrMapSize);
+
+		free(strMap);
+		res.status = status_ok;
+		return res;
+	}
+
 	PUGI__FN xml_parse_result load_buffer_impl(xml_document_struct* doc, xml_node_struct* root, void* contents, size_t size, unsigned int options, xml_encoding encoding, bool is_mutable, bool own, char_t** out_buffer)
 	{
 		// check input buffer
@@ -4695,6 +4838,10 @@ PUGI__NS_BEGIN
 
 		// get actual encoding
 		xml_encoding buffer_encoding = impl::get_buffer_encoding(encoding, contents, size);
+		if (buffer_encoding == encoding_bin)
+		{
+			return load_bin_impl(doc,root,(const char *)contents, (int)size);
+		}
 
 		// get private buffer
 		char_t* buffer = 0;
@@ -5020,6 +5167,15 @@ PUGI__NS_BEGIN
 	PUGI__FN bool save_file_impl(const xml_document& doc, FILE* file, const char_t* indent, unsigned int flags, xml_encoding encoding)
 	{
 		if (!file) return false;
+		if (encoding == encoding_bin)
+		{
+			doc.save_bin(file);
+		}
+		else
+		{
+			xml_writer_file writer(file);
+			doc.save(writer, indent, flags, encoding);
+		}
 
 		xml_writer_file writer(file);
 		doc.save(writer, indent, flags, encoding);
@@ -5056,6 +5212,16 @@ namespace pugi
 		(void)!result; // unfortunately we can't do proper error handling here
 	}
 
+	PUGI__FN void xml_writer_buff::write( const void* data, size_t size )
+	{
+		size /= sizeof(char_t);
+		if(m_nSize+size<MAX_XML_CHARBUF)
+		{
+			memcpy(m_szBuf+m_nSize,data,size*sizeof(char_t));
+			m_nSize+=(int)size;
+			m_szBuf[m_nSize]=0;
+		}
+	}
 #ifndef PUGIXML_NO_STL
 	PUGI__FN xml_writer_stream::xml_writer_stream(std::basic_ostream<char, std::char_traits<char> >& stream): narrow_stream(&stream), wide_stream(0)
 	{
@@ -5227,6 +5393,18 @@ namespace pugi
 	PUGI__FN size_t xml_attribute::hash_value() const
 	{
 		return static_cast<size_t>(reinterpret_cast<uintptr_t>(_attr) / sizeof(xml_attribute_struct));
+	}
+
+	PUGI__FN bool xml_attribute::set_userdata(int data)
+	{
+		if(!_attr)
+			return false;
+		_attr->userdata=data;
+		return true;
+	}
+	PUGI__FN int  xml_attribute::get_userdata() const
+	{
+		return _attr?_attr->userdata:0;
 	}
 
 	PUGI__FN xml_attribute_struct* xml_attribute::internal_object() const
@@ -5508,33 +5686,45 @@ namespace pugi
 		return (_root && _root->value) ? _root->value + 0 : PUGIXML_TEXT("");
 	}
 
-	PUGI__FN xml_node xml_node::child(const char_t* name_) const
+	PUGI__FN bool xml_node::set_userdata(int data)
+	{
+		if (!_root) return false;
+		_root->userdata = data;
+		return true;
+	}
+	
+	PUGI__FN int xml_node::get_userdata() const
+	{
+		return _root ? _root->userdata : 0;
+	}
+
+	PUGI__FN xml_node xml_node::child(const char_t* name_,bool bCaseSensitive) const
 	{
 		if (!_root) return xml_node();
 
 		for (xml_node_struct* i = _root->first_child; i; i = i->next_sibling)
-			if (i->name && impl::strequal(name_, i->name)) return xml_node(i);
+			if (i->name && impl::strequal(name_, i->name,bCaseSensitive)) return xml_node(i);
 
 		return xml_node();
 	}
 
-	PUGI__FN xml_attribute xml_node::attribute(const char_t* name_) const
+	PUGI__FN xml_attribute xml_node::attribute(const char_t* name_,bool bCaseSensitive) const
 	{
 		if (!_root) return xml_attribute();
 
 		for (xml_attribute_struct* i = _root->first_attribute; i; i = i->next_attribute)
-			if (i->name && impl::strequal(name_, i->name))
+			if (i->name && impl::strequal(name_, i->name,bCaseSensitive))
 				return xml_attribute(i);
 
 		return xml_attribute();
 	}
 
-	PUGI__FN xml_node xml_node::next_sibling(const char_t* name_) const
+	PUGI__FN xml_node xml_node::next_sibling(const char_t* name_,bool bCaseSensitive) const
 	{
 		if (!_root) return xml_node();
 
 		for (xml_node_struct* i = _root->next_sibling; i; i = i->next_sibling)
-			if (i->name && impl::strequal(name_, i->name)) return xml_node(i);
+			if (i->name && impl::strequal(name_, i->name,bCaseSensitive)) return xml_node(i);
 
 		return xml_node();
 	}
@@ -5544,17 +5734,17 @@ namespace pugi
 		return _root ? xml_node(_root->next_sibling) : xml_node();
 	}
 
-	PUGI__FN xml_node xml_node::previous_sibling(const char_t* name_) const
+	PUGI__FN xml_node xml_node::previous_sibling(const char_t* name_,bool bCaseSensitive) const
 	{
 		if (!_root) return xml_node();
 
 		for (xml_node_struct* i = _root->prev_sibling_c; i->next_sibling; i = i->prev_sibling_c)
-			if (i->name && impl::strequal(name_, i->name)) return xml_node(i);
+			if (i->name && impl::strequal(name_, i->name,bCaseSensitive)) return xml_node(i);
 
 		return xml_node();
 	}
 
-	PUGI__FN xml_attribute xml_node::attribute(const char_t* name_, xml_attribute& hint_) const
+	PUGI__FN xml_attribute xml_node::attribute(const char_t* name_, xml_attribute& hint_,bool bCaseSensitive) const
 	{
 		xml_attribute_struct* hint = hint_._attr;
 
@@ -5565,7 +5755,7 @@ namespace pugi
 
 		// optimistically search from hint up until the end
 		for (xml_attribute_struct* i = hint; i; i = i->next_attribute)
-			if (i->name && impl::strequal(name_, i->name))
+			if (i->name && impl::strequal(name_, i->name,bCaseSensitive))
 			{
 				// update hint to maximize efficiency of searching for consecutive attributes
 				hint_._attr = i->next_attribute;
@@ -5576,7 +5766,7 @@ namespace pugi
 		// wrap around and search from the first attribute until the hint
 		// 'j' null pointer check is technically redundant, but it prevents a crash in case the assertion above fails
 		for (xml_attribute_struct* j = _root->first_attribute; j && j != hint; j = j->next_attribute)
-			if (j->name && impl::strequal(name_, j->name))
+			if (j->name && impl::strequal(name_, j->name,bCaseSensitive))
 			{
 				// update hint to maximize efficiency of searching for consecutive attributes
 				hint_._attr = j->next_attribute;
@@ -5625,9 +5815,9 @@ namespace pugi
 		return PUGIXML_TEXT("");
 	}
 
-	PUGI__FN const char_t* xml_node::child_value(const char_t* name_) const
+	PUGI__FN const char_t* xml_node::child_value(const char_t* name_,bool bCaseSensitive) const
 	{
-		return child(name_).child_value();
+		return child(name_,bCaseSensitive).child_value();
 	}
 
 	PUGI__FN xml_attribute xml_node::first_attribute() const
@@ -6168,28 +6358,28 @@ namespace pugi
 		return impl::load_buffer_impl(doc, _root, const_cast<void*>(contents), size, options, encoding, false, false, &extra->buffer);
 	}
 
-	PUGI__FN xml_node xml_node::find_child_by_attribute(const char_t* name_, const char_t* attr_name, const char_t* attr_value) const
+	PUGI__FN xml_node xml_node::find_child_by_attribute(const char_t* name_, const char_t* attr_name, const char_t* attr_value,bool bCaseSensitive) const
 	{
 		if (!_root) return xml_node();
 
 		for (xml_node_struct* i = _root->first_child; i; i = i->next_sibling)
-			if (i->name && impl::strequal(name_, i->name))
+			if (i->name && impl::strequal(name_, i->name,bCaseSensitive))
 			{
 				for (xml_attribute_struct* a = i->first_attribute; a; a = a->next_attribute)
-					if (a->name && impl::strequal(attr_name, a->name) && impl::strequal(attr_value, a->value ? a->value + 0 : PUGIXML_TEXT("")))
+					if (a->name && impl::strequal(attr_name, a->name,bCaseSensitive) && impl::strequal(attr_value, a->value ? a->value + 0 : PUGIXML_TEXT(""),bCaseSensitive))
 						return xml_node(i);
 			}
 
 		return xml_node();
 	}
 
-	PUGI__FN xml_node xml_node::find_child_by_attribute(const char_t* attr_name, const char_t* attr_value) const
+	PUGI__FN xml_node xml_node::find_child_by_attribute(const char_t* attr_name, const char_t* attr_value,bool bCaseSensitive) const
 	{
 		if (!_root) return xml_node();
 
 		for (xml_node_struct* i = _root->first_child; i; i = i->next_sibling)
 			for (xml_attribute_struct* a = i->first_attribute; a; a = a->next_attribute)
-				if (a->name && impl::strequal(attr_name, a->name) && impl::strequal(attr_value, a->value ? a->value + 0 : PUGIXML_TEXT("")))
+				if (a->name && impl::strequal(attr_name, a->name,bCaseSensitive) && impl::strequal(attr_value, a->value ? a->value + 0 : PUGIXML_TEXT(""),bCaseSensitive))
 					return xml_node(i);
 
 		return xml_node();
@@ -6856,7 +7046,7 @@ namespace pugi
 		{
 			_wrap = _parent.last_child();
 
-			if (!impl::strequal(_wrap.name(), _name))
+			if (!impl::strequal(_wrap.name(), _name,true))
 				_wrap = _wrap.previous_sibling(_name);
 		}
 
@@ -6908,6 +7098,10 @@ namespace pugi
 
 		default: return "Unknown error";
 		}
+	}
+	
+	PUGI__FN bool xml_parse_result::isOK() const{
+		return status == status_ok;
 	}
 
 	PUGI__FN xml_document::xml_document(): _buffer(0)
@@ -7242,6 +7436,161 @@ namespace pugi
 		impl::node_output(buffered_writer, _root, indent, flags, 0);
 
 		buffered_writer.flush();
+	}
+
+	class SaveAsBin{
+	public:
+		typedef SOUI::SMap<SOUI::SStringA,int> STRMAP;	//utf8_name ->index
+
+		static void _AddStr2Map(STRMAP & strMap, const char_t * str) ;
+		static void _build_str_map(xml_node xmlNode,STRMAP &strMap) ;
+		static void _write_str(const STRMAP & strMap,const char_t * str,FILE * f) ;
+		static void _write_str_map(FILE *f,STRMAP & strMap) ;
+
+		static int _index_str_map(STRMAP & strMap);
+		static void _save_bin(const STRMAP & strMap,xml_node xmlNode,FILE * f) ;
+		static void _save_bin(xml_node root,FILE *f) ;
+	};
+
+	void SaveAsBin::_AddStr2Map(STRMAP & strMap, const char_t * str) 
+	{
+		if(str!=NULL)
+		{
+#ifdef PUGIXML_WCHAR_MODE
+			SOUI::SStringA str2 = SOUI::S_CW2A(str,CP_UTF8);
+#else
+			SOUI::SStringA str2(str);
+#endif
+			if(!str2.IsEmpty() && strMap.Lookup(str2)==NULL)
+			{
+				strMap[str2] = -1;//add to map.
+			}
+		}
+	}
+
+	void SaveAsBin::_write_str(const STRMAP & strMap,const char_t * str,FILE * f) 
+	{
+		size_t sz = strMap.GetCount();
+		int nIdxSize= impl::index_size((int)strMap.GetCount());
+		int nIdx = 0;
+
+#ifdef PUGIXML_WCHAR_MODE
+		SOUI::SStringA str2 = SOUI::S_CW2A(str, CP_UTF8);
+#else
+		SOUI::SStringA str2(str);// = SOUI::S_CA2A(str, CP_ACP, CP_UTF8);
+#endif
+		if(!str2.IsEmpty())
+		{
+			nIdx = strMap.Lookup(str2)->m_value;
+		}
+		fwrite(&nIdx,1,nIdxSize,f);
+	}
+
+	void SaveAsBin::_build_str_map(xml_node xmlNode,STRMAP &strMap) 
+	{
+		if(xmlNode.type()<node_document || xmlNode.type()>node_comment)
+			return;
+		_AddStr2Map(strMap,xmlNode.name());
+		_AddStr2Map(strMap,xmlNode.value());
+
+		xml_attribute_iterator it = xmlNode.attributes_begin();
+		while(it != xmlNode.attributes_end())
+		{
+			_AddStr2Map(strMap,it->name());
+			_AddStr2Map(strMap,it->value());
+			it++;
+		}
+		xml_node xmlChild = xmlNode.first_child();
+		while(xmlChild)
+		{
+			_build_str_map(xmlChild,strMap);
+			xmlChild = xmlChild.next_sibling();
+		}
+	}
+
+	//build StrMap index and return total buffer length.
+	int SaveAsBin::_index_str_map(STRMAP & strMap) 
+	{
+		int nRet = 0;
+		int idx = 1;//note: start from 1 but not 0. zero is remained for empty string.
+		SOUI::SPOSITION pos = strMap.GetStartPosition();
+		while(pos)
+		{
+		STRMAP::CPair *p = strMap.GetNext(pos);
+		p->m_value = idx++;
+		nRet += p->m_key.GetLength()+1;
+		}
+		return nRet;
+	}
+
+	void SaveAsBin::_write_str_map(FILE *f,STRMAP & strMap) 
+	{
+		SOUI::SPOSITION pos = strMap.GetStartPosition();
+		while(pos)
+		{
+			STRMAP::CPair *p = strMap.GetNext(pos);
+			fwrite(p->m_key.c_str(),1,p->m_key.GetLength()+1,f);
+		}
+	}
+
+	void SaveAsBin::_save_bin(const STRMAP & strMap,xml_node xmlNode,FILE * f) 
+	{
+		//save node type
+		xml_node_type type = xmlNode.type();
+		if(type<node_document || type>node_comment)
+			return;
+		if(type > node_document)
+		{//save string with the last end character
+			//save node name: todo:wcslen
+			_write_str(strMap,xmlNode.name(),f);
+			//save node value
+			_write_str(strMap,xmlNode.value(),f);
+			//save attribute
+			xml_attribute_iterator it = xmlNode.attributes_begin();
+			while(it != xmlNode.attributes_end())
+			{
+				_write_str(strMap,it->name(),f);
+				_write_str(strMap,it->value(),f);
+				it++;
+			}
+			//write attribute end flag
+			_write_str(strMap,NULL,f);
+		}
+		//write children
+		xml_node xmlChild = xmlNode.first_child();
+		while(xmlChild)
+		{
+			//write child
+			char cT = (char)xmlChild.type();
+			fwrite(&cT,1,1,f);
+			_save_bin(strMap,xmlChild,f);
+			xmlChild = xmlChild.next_sibling();
+		}
+		//save child end
+		char cT = (char)node_null;
+		fwrite(&cT,1,1,f);
+	}
+
+	void SaveAsBin::_save_bin(xml_node root,FILE *f) 
+	{
+		STRMAP strMap;
+		_build_str_map(root,strMap);
+		int nSize = _index_str_map(strMap);
+
+		//write header
+		sxml_info info = { {SXML_BOM[0],SXML_BOM [1],SXML_BOM [2],SXML_BOM [3]},SXML_VER,(int)strMap.GetCount(),nSize };//update ver to 2
+		fwrite(&info,1,sizeof(info),f);
+
+		//write str map
+		_write_str_map(f,strMap);
+
+		//write xml structure
+		_save_bin(strMap,root,f);
+	}
+
+	PUGI__FN void xml_document::save_bin(FILE *f) const
+	{
+		SaveAsBin::_save_bin(*this,f);
 	}
 
 #ifndef PUGIXML_NO_STL
@@ -7905,12 +8254,12 @@ PUGI__NS_BEGIN
 
 		bool operator==(const xpath_string& o) const
 		{
-			return strequal(_buffer, o._buffer);
+			return strequal(_buffer, o._buffer,true);
 		}
 
 		bool operator!=(const xpath_string& o) const
 		{
-			return !strequal(_buffer, o._buffer);
+			return !strequal(_buffer, o._buffer,true);
 		}
 
 		bool uses_heap() const
@@ -9821,7 +10170,7 @@ PUGI__NS_BEGIN
 			switch (_test)
 			{
 			case nodetest_name:
-				if (strequal(name, _data.nodetest) && is_xpath_attribute(name))
+				if (strequal(name, _data.nodetest,true) && is_xpath_attribute(name))
 				{
 					ns.push_back(xpath_node(xml_attribute(a), xml_node(parent)), alloc);
 					return true;
@@ -9861,7 +10210,7 @@ PUGI__NS_BEGIN
 			switch (_test)
 			{
 			case nodetest_name:
-				if (type == node_element && n->name && strequal(n->name, _data.nodetest))
+				if (type == node_element && n->name && strequal(n->name, _data.nodetest,true))
 				{
 					ns.push_back(xml_node(n), alloc);
 					return true;
@@ -9897,7 +10246,7 @@ PUGI__NS_BEGIN
 				break;
 
 			case nodetest_pi:
-				if (type == node_pi && n->name && strequal(n->name, _data.nodetest))
+				if (type == node_pi && n->name && strequal(n->name, _data.nodetest,true))
 				{
 					ns.push_back(xml_node(n), alloc);
 					return true;
@@ -10405,7 +10754,7 @@ PUGI__NS_BEGIN
 
 				xml_attribute attr = c.n.node().attribute(_left->_data.nodetest);
 
-				return attr && strequal(attr.value(), value) && is_xpath_attribute(attr.name());
+				return attr && strequal(attr.value(), value,true) && is_xpath_attribute(attr.name());
 			}
 
 			case ast_variable:
@@ -12487,7 +12836,7 @@ namespace pugi
 
 		// look for existing variable
 		for (xpath_variable* var = _data[hash]; var; var = var->_next)
-			if (impl::strequal(var->name(), name))
+			if (impl::strequal(var->name(), name,true))
 				return var;
 
 		return 0;
@@ -12539,7 +12888,7 @@ namespace pugi
 
 		// look for existing variable
 		for (xpath_variable* var = _data[hash]; var; var = var->_next)
-			if (impl::strequal(var->name(), name))
+			if (impl::strequal(var->name(), name,true))
 				return var->type() == type ? var : 0;
 
 		// add new variable

@@ -11,23 +11,28 @@
  * Copyright (C) 2003, by Kristen Wegner (kristen@tima.net)
  */
 
+#include "utilities-def.h"
+
 #ifndef HEADER_PUGICONFIG_HPP
 #define HEADER_PUGICONFIG_HPP
 
 // Uncomment this to enable wchar_t mode
-// #define PUGIXML_WCHAR_MODE
+#define PUGIXML_WCHAR_MODE
 
 // Uncomment this to enable compact mode
 // #define PUGIXML_COMPACT
 
 // Uncomment this to disable XPath
-// #define PUGIXML_NO_XPATH
+#define PUGIXML_NO_XPATH
 
 // Uncomment this to disable STL
-// #define PUGIXML_NO_STL
+#define PUGIXML_NO_STL
 
 // Uncomment this to disable exceptions
-// #define PUGIXML_NO_EXCEPTIONS
+#define PUGIXML_NO_EXCEPTIONS
+
+#define PUGIXML_CLASS UTILITIES_API
+#define PUGIXML_API UTILITIES_API
 
 // Set this to control attributes for public classes/functions, i.e.:
 // #define PUGIXML_API __declspec(dllexport) // to export all public symbols from DLL

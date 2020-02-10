@@ -25,6 +25,9 @@
 
 // Include stddef.h for size_t and ptrdiff_t
 #include <stddef.h>
+#include <stdio.h>
+#include <souicoll.h>
+#include <string/tstring.h>
 
 // Include exception header for XPath
 #if !defined(PUGIXML_NO_XPATH) && !defined(PUGIXML_NO_EXCEPTIONS)
@@ -224,7 +227,8 @@ namespace pugi
 		encoding_utf32_be,	// Big-endian UTF32
 		encoding_utf32,		// UTF32 with native endianness
 		encoding_wchar,		// The same encoding wchar_t has (either UTF16 or UTF32)
-		encoding_latin1
+		encoding_latin1,
+		encoding_bin,		// bin xml
 	};
 
 	// Formatting flags
@@ -330,6 +334,28 @@ namespace pugi
 		void* file;
 	};
 
+	#define MAX_XML_CHARBUF	1024*20	//max to 20k
+	class PUGIXML_CLASS xml_writer_buff: public xml_writer
+	{
+	public:
+		xml_writer_buff():m_nSize(0){
+			m_szBuf=new char_t[MAX_XML_CHARBUF+1];
+			m_szBuf[0]=0;
+		}
+
+		~xml_writer_buff()
+		{
+			if(m_szBuf) delete []m_szBuf;
+		}
+
+		virtual void write(const void* data, size_t size);
+
+		const char_t * buffer(){return m_szBuf;}
+		int	size(){return m_nSize;}
+	protected:
+		char_t *m_szBuf;
+		int	 m_nSize;
+	};
 	#ifndef PUGIXML_NO_STL
 	// xml_writer implementation for streams
 	class PUGIXML_CLASS xml_writer_stream: public xml_writer
@@ -385,6 +411,9 @@ namespace pugi
 		// Get attribute name/value, or "" if attribute is empty
 		const char_t* name() const;
 		const char_t* value() const;
+
+		bool set_userdata(int data);
+		int  get_userdata() const;
 
 		// Get attribute value, or the default value if attribute is empty
 		const char_t* as_string(const char_t* def = PUGIXML_TEXT("")) const;
@@ -501,6 +530,9 @@ namespace pugi
 		// Note: For <node>text</node> node.value() does not return "text"! Use child_value() or text() methods to access text inside nodes.
 		const char_t* value() const;
 
+		bool set_userdata(int data);
+		int get_userdata() const;
+
 		// Get attribute list
 		xml_attribute first_attribute() const;
 		xml_attribute last_attribute() const;
@@ -523,19 +555,19 @@ namespace pugi
 		xml_text text() const;
 
 		// Get child, attribute or next/previous sibling with the specified name
-		xml_node child(const char_t* name) const;
-		xml_attribute attribute(const char_t* name) const;
-		xml_node next_sibling(const char_t* name) const;
-		xml_node previous_sibling(const char_t* name) const;
+		xml_node child(const char_t* name,bool bCaseSensitive=false) const;
+		xml_attribute attribute(const char_t* name,bool bCaseSensitive=false) const;
+		xml_node next_sibling(const char_t* name,bool bCaseSensitive=false) const;
+		xml_node previous_sibling(const char_t* name,bool bCaseSensitive=false) const;
 
 		// Get attribute, starting the search from a hint (and updating hint so that searching for a sequence of attributes is fast)
-		xml_attribute attribute(const char_t* name, xml_attribute& hint) const;
+		xml_attribute attribute(const char_t* name, xml_attribute& hint,bool bCaseSensitive=false) const;
 
 		// Get child value of current node; that is, value of the first child node of type PCDATA/CDATA
 		const char_t* child_value() const;
 
 		// Get child value of child with specified name. Equivalent to child(name).child_value().
-		const char_t* child_value(const char_t* name) const;
+		const char_t* child_value(const char_t* name,bool bCaseSensitive=false) const;
 
 		// Set node name/value (returns false if node is empty, there is not enough memory, or node can not have name/value)
 		bool set_name(const char_t* rhs);
@@ -645,8 +677,8 @@ namespace pugi
 		}
 
 		// Find child node by attribute name/value
-		xml_node find_child_by_attribute(const char_t* name, const char_t* attr_name, const char_t* attr_value) const;
-		xml_node find_child_by_attribute(const char_t* attr_name, const char_t* attr_value) const;
+		xml_node find_child_by_attribute(const char_t* name, const char_t* attr_name, const char_t* attr_value,bool bCaseSensitive) const;
+		xml_node find_child_by_attribute(const char_t* attr_name, const char_t* attr_value,bool bCaseSensitive) const;
 
 	#ifndef PUGIXML_NO_STL
 		// Get the absolute node path from root as a text string.
@@ -1007,6 +1039,18 @@ namespace pugi
 
 		// Get error description
 		const char* description() const;
+
+		bool isOK() const;
+	};
+
+	#define SXML_VER	2
+	static const unsigned char SXML_BOM[4] = { 's','x','m','l' };
+	struct sxml_info
+	{
+		unsigned char flag[4];//bom of sxml
+		int  ver;    //version
+		int  nStrMapSize;   //str map size
+		int  nStrMapLen;    //str map length
 	};
 
 	// Document class (DOM tree root)
@@ -1073,6 +1117,7 @@ namespace pugi
 
 		// Save XML document to writer (semantics is slightly different from xml_node::print, see documentation for details).
 		void save(xml_writer& writer, const char_t* indent = PUGIXML_TEXT("\t"), unsigned int flags = format_default, xml_encoding encoding = encoding_auto) const;
+		void save_bin(FILE *f) const;
 
 	#ifndef PUGIXML_NO_STL
 		// Save XML document to stream (semantics is slightly different from xml_node::print, see documentation for details).
