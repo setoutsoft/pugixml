@@ -5176,10 +5176,6 @@ PUGI__NS_BEGIN
 			xml_writer_file writer(file);
 			doc.save(writer, indent, flags, encoding);
 		}
-
-		xml_writer_file writer(file);
-		doc.save(writer, indent, flags, encoding);
-
 		return ferror(file) == 0;
 	}
 
