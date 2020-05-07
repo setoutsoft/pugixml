@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <souicoll.h>
 #include <string/tstring.h>
+#include <interface/sxml-i.h>
 
 // Include exception header for XPath
 #if !defined(PUGIXML_NO_XPATH) && !defined(PUGIXML_NO_EXCEPTIONS)
@@ -374,7 +375,7 @@ namespace pugi
 	#endif
 
 	// A light-weight handle for manipulating attributes in DOM tree
-	class PUGIXML_CLASS xml_attribute
+	class PUGIXML_CLASS xml_attribute : public SOUI::IXmlAttr
 	{
 		friend class xml_attribute_iterator;
 		friend class xml_node;
@@ -385,11 +386,52 @@ namespace pugi
 		typedef void (*unspecified_bool_type)(xml_attribute***);
 
 	public:
+		STDMETHOD_(void,Assign)(THIS_ const SOUI::IXmlAttr * pAttr);
+		STDMETHOD_(LPVOID,Data)(THIS) SCONST;
+
+		// Check if attribute is empty
+		STDMETHOD_(bool,Empty)(THIS) SCONST
+		{
+			return empty();
+		}
+
+		// Get attribute name/value, or "" if attribute is empty
+		STDMETHOD_(const char_t*,Name)(THIS) SCONST
+		{
+			return name();
+		}
+		STDMETHOD_(const char_t*,Value)(THIS) SCONST
+		{
+			return value();
+		}
+
+		STDMETHOD_(bool,set_userdata)(THIS_ int data);
+		STDMETHOD_(int,get_userdata)(THIS) SCONST;
+		// Get next/previous attribute in the attribute list of the parent node
+		STDMETHOD_(bool,Next)(THIS)
+		{
+			if(Empty())
+				return false;
+			xml_attribute attr = next_attribute();
+			Assign(&attr);
+			return true;
+		}
+
+		STDMETHOD_(bool, Prev)(THIS)
+		{
+			if(Empty())
+				return false;
+			xml_attribute attr = previous_attribute();
+			Assign(&attr);
+			return true;
+		}
+	public:
 		// Default constructor. Constructs an empty attribute.
 		xml_attribute();
 
 		// Constructs attribute from internal pointer
 		explicit xml_attribute(xml_attribute_struct* attr);
+		explicit xml_attribute(const SOUI::IXmlAttr * attr);
 
 		// Safe bool conversion operator
 		operator unspecified_bool_type() const;
@@ -411,9 +453,6 @@ namespace pugi
 		// Get attribute name/value, or "" if attribute is empty
 		const char_t* name() const;
 		const char_t* value() const;
-
-		bool set_userdata(int data);
-		int  get_userdata() const;
 
 		// Get attribute value, or the default value if attribute is empty
 		const char_t* as_string(const char_t* def = PUGIXML_TEXT("")) const;
@@ -485,7 +524,7 @@ namespace pugi
 #endif
 
 	// A light-weight handle for manipulating nodes in DOM tree
-	class PUGIXML_CLASS xml_node
+	class PUGIXML_CLASS xml_node : public SOUI::IXmlNode
 	{
 		friend class xml_attribute_iterator;
 		friend class xml_node_iterator;
@@ -497,11 +536,103 @@ namespace pugi
 		typedef void (*unspecified_bool_type)(xml_node***);
 
 	public:
+		STDMETHOD_(void,Assign)(THIS_ const SOUI::IXmlNode * pNode);
+		STDMETHOD_(LPVOID,Data)(THIS) SCONST;
+
+		STDMETHOD_(bool,Empty)(THIS) SCONST{
+			return empty();
+		}
+
+		STDMETHOD_(const char_t*,Name)(THIS) SCONST{
+			return name();
+		}
+
+		STDMETHOD_(const char_t*,Value)(THIS) SCONST
+		{
+			return value();
+		}
+
+		STDMETHOD_(bool,set_userdata)(THIS_ int data);
+		STDMETHOD_(int,get_userdata)(THIS) SCONST;
+
+		// Get attribute list
+		STDMETHOD_(bool,Attribute)(THIS_ const char_t* name,bool bCaseSensitive,SOUI::IXmlAttr* pAttr) SCONST
+		{
+			xml_attribute attr = attribute(name,bCaseSensitive);
+			pAttr->Assign(&attr);
+			return pAttr->Empty();
+		}
+
+		STDMETHOD_(bool,FirstAttribute)(THIS_ SOUI::IXmlAttr *pAttr) SCONST
+		{
+			xml_attribute attr = first_attribute();
+			pAttr->Assign(&attr);
+			return pAttr->Empty();
+		}
+
+		STDMETHOD_(bool,LastAttribute)(THIS_ SOUI::IXmlAttr *pAttr) SCONST
+		{
+			xml_attribute attr = last_attribute();
+			pAttr->Assign(&attr);
+			return pAttr->Empty();
+		}
+
+		// Get children list
+		STDMETHOD_(bool,Child)(THIS_ const char_t* name,bool bCaseSensitive,SOUI::IXmlNode* pChild) SCONST
+		{
+			xml_node node = child(name,bCaseSensitive);
+			pChild->Assign(&node);
+			return pChild->Empty();
+		}
+
+		STDMETHOD_(bool, FirstChild)(THIS_ SOUI::IXmlNode* pChild) SCONST
+		{
+			xml_node node = first_child();
+			pChild->Assign(&node);
+			return pChild->Empty();
+		}
+
+		STDMETHOD_(bool, LastChild)(THIS_ SOUI::IXmlNode* pChild) SCONST
+		{
+			xml_node node = last_child();
+			pChild->Assign(&node);
+			return pChild->Empty();
+		}
+
+		// Get next/previous sibling in the children list of the parent node
+		STDMETHOD_(bool, NextSibling)(THIS_ SOUI::IXmlNode* pSib) SCONST
+		{
+			xml_node node = next_sibling();
+			pSib->Assign(&node);
+			return pSib->Empty();
+		}
+		STDMETHOD_(bool, PrevSibling)(THIS_ SOUI::IXmlNode* pSib) SCONST
+		{
+			xml_node node = previous_sibling();
+			pSib->Assign(&node);
+			return pSib->Empty();
+		}
+		STDMETHOD_(bool, NextSibling2)(THIS_ const char_t* name,bool bCaseSensitive, SOUI::IXmlNode* pSib) SCONST
+		{
+			xml_node node = next_sibling(name,bCaseSensitive);
+			pSib->Assign(&node);
+			return pSib->Empty();
+		}
+		STDMETHOD_(bool, PrevSibling2)(THIS_ const char_t* name,bool bCaseSensitive, SOUI::IXmlNode* pSib) SCONST
+		{
+			xml_node node = previous_sibling(name,bCaseSensitive);
+			pSib->Assign(&node);
+			return pSib->Empty();
+		}
+
+	public:
 		// Default constructor. Constructs an empty node.
 		xml_node();
 
 		// Constructs node from internal pointer
 		explicit xml_node(xml_node_struct* p);
+		
+		explicit xml_node(const SOUI::IXmlNode *p);
 
 		// Safe bool conversion operator
 		operator unspecified_bool_type() const;
@@ -529,9 +660,6 @@ namespace pugi
 		// Get node value, or "" if node is empty or it has no value
 		// Note: For <node>text</node> node.value() does not return "text"! Use child_value() or text() methods to access text inside nodes.
 		const char_t* value() const;
-
-		bool set_userdata(int data);
-		int get_userdata() const;
 
 		// Get attribute list
 		xml_attribute first_attribute() const;
@@ -1054,7 +1182,7 @@ namespace pugi
 	};
 
 	// Document class (DOM tree root)
-	class PUGIXML_CLASS xml_document: public xml_node
+	class PUGIXML_CLASS xml_document: public xml_node, public SOUI::IXmlDoc
 	{
 	private:
 		char_t* _buffer;
